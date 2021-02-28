@@ -1,0 +1,49 @@
+
+String inputString;
+double angle = 0;
+double pi = 3.14;
+bool stringComplete;
+
+void setup() {
+  Serial.begin(115200);
+  
+
+}
+
+void loop() {
+  // if (Serial.available() > 0) {
+    //data = Serial.readStringUntil('\n');
+    //Serial.println(data);
+    //Serial.println(data);
+  
+  delay(1000);
+  if(inputString == 1){
+      angle = 0;
+    }
+    else if(inputString == 2){
+      angle = pi/2;
+    }
+    else if(inputString == 3){
+      angle = pi;
+    }
+    else if(inputString == 4){
+      angle = (3*pi)/2;
+    }
+    
+}
+void serialEvent(){
+  while(Serial.available()){
+    //get new byte
+    char inChar = (char)Serial.read();
+    //add it to input string
+    
+    inputString += inChar;
+    //if the incoming character is a newline, set a flag
+    //so the main oop can do something aboutit
+    if (inChar == "\n"){
+      stringComplete = true;
+    }
+    Serial.println(angle);
+    delay(1000);  
+    }
+}
