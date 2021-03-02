@@ -1,0 +1,124 @@
+import serial
+import time
+import board
+import busio
+import adafruit_character_lcd.character_lcd_rgb_i2c as character_lcd
+import cv2
+import numpy as np
+from time import sleep
+from picamera import PiCamera
+from picamera.array import PiRGBArray
+import cv2.aruco as aruco
+#import matplotlib.pyplot as plt
+
+#Exercise definitions
+def configImg():
+    height = 480
+    width = 640
+    # Configure Camera
+    camera = PiCamera(resolution=(width, height), framerate=32)
+    # Set ISO to the desired value
+    camera.iso = 600 #400-800 low light AND 100-200 day light
+    # Wait for the automatic gain control to settle
+    sleep(2)
+    # Now fix the values
+    camera.shutter_speed = camera.exposure_speed
+    camera.exposure_mode = 'off'
+    g = camera.awb_gains
+    camera.awb_mode = 'off'
+    camera.awb_gains = g
+    return camera
+
+
+def getQuad(corners):
+    x1 = corners[0][0][0][0]
+    x2 = corners[0][0][1][0]
+    x3 = corners[0][0][2][0]
+    x4 = corners[0][0][3][0]
+    y1 = corners[0][0][0][1]
+    y2 = corners[0][0][1][1]
+    y3 = corners[0][0][2][1]
+    y4 = corners[0][0][3][1]
+
+    top_width = (x2-x1)
+    bottom_width = (x3-x4)
+    avg_width = (top_width + bottom_width)/2
+
+    acuroX = corners[0][0][0][0] + corners[0][0][1][0] + corners[0][0][2][0] + corners[0][0][3][0]
+    acuroY = corners[0][0][0][1] + corners[0][0][1][1] + corners[0][0][2][1] + corners[0][0][3][1]
+    centerX = acuroX * .25
+    centerY = acuroY  * .25
+    arucoCenter=[centerX,centerY]
+    
+    if centerX < 320:
+        if centerY < 240:
+            print("First Quadrant")
+            result = b'1\n' #b'1\n' converts these values to binary, needed for serial communcation
+        else:
+            print("Third Quadrant")
+            result = b'3\n'
+            
+    if centerX >= 320:
+        if centerY < 240:
+            print("Second Quadrant")
+            result = b'2\n'
+        else:
+          print("Fourth Quadrant")
+          result = b'4\n'
+          
+    return result
+
+
+
+
+#modify this if you have a different sized character LCD
+lcd_columns = 16
+#the physical amount of columns/rows on the adafruit
+lcd_rows = 2
+
+#Initialize I2C Bus
+i2c = busio.I2C(board.SCL, board.SDA)
+
+#Initialize the LCD class
+lcd = character_lcd.Character_LCD_RGB_I2C(i2c, lcd_columns, lcd_rows)
+
+lcd.clear()
+
+#Set LCD color to Red
+lcd.color = [100, 0, 0]
+time.sleep(1)
+
+ser = serial.Serial('/dev/ttyACM0', 115200)
+
+time.sleep(3)
+
+aruco_dict = aruco.Dictionary_get(aruco.DICT_6X6_250)  # .DICT_6X6_250
+while True:
+    camera = configImg()
+    rawCapture = PiRGBArray(camera, size=(640,480))
+    sleep(0.1)
+    sendtoArd = 0
+    for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
+        # Goes through each frame and captures image in image
+        image = frame.array
+        cv2.imshow("Frame",image)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        parameters = aruco.DetectorParameters_create()
+        corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+        if ids == None:
+            print("No marker detected")
+            sendtoArd = 0
+            # Goes through each frame and captures image in image
+        else:
+        #Enable Motors
+            ser.write(getQuad(corners)) #sends the quadrant location to the arduino
+            time.sleep(.5)
+            line = ser.readline().decode('utf-8').rstrip() #reads in the actual position of the motor
+            lcd.message = line
+            print(lcd.message)
+            time.sleep(.5)        
+    
+        key = cv2.waitKey(1) & 0xFF
+        rawCapture.truncate(0)       
+        if key == ord("q"):
+             break

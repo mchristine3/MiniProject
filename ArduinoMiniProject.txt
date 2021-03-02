@@ -1,0 +1,275 @@
+/*  NAME: Kris Flatt
+ *  COURSE: EENG 350 C
+ *  ASSIGNMENT: Mini Project
+ *  FileName: step_response
+ *  Last Modified: 5 PM, 28 February 2021
+ *  
+ *  Description: The purpose of theis program is to drive a motor to rotate a wheel to the positions of 
+ *  0, 90, 180, and 270 degrees ( 0, pi/2, pi, and 3pi/2 radians). The system should be able to rotate 
+ *  through all the positions within 10 seconds, and can resist outside disturbances. 
+ *  
+ *  Circuit Set-up: The motor has 6 wires for input/output control, you can consult the documentation for 
+ *  the motor used in this assignment here: https://www.pololu.com/product/2824. For the Arduino, the most important
+ *  pins for the motor are the Yellow and White wires, they are Channel A and B of the encoder repectively. Make sure
+ *  those are connected to the proper I/O pins on the Arduino. The Green and Blue wires connect to Ground and 5V on the 
+ *  Arduino respectively. For this assignment, the Red and Black wires are the +7.2 volts and ground of the battery to
+ *  the motor. Mode description on the wiring of the circuit can be found here: https://www.pololu.com/docs/0J55/3.c 
+ *  
+ *  Documentation: 
+ *  I received help from the following people and sources:
+ *  https://forum.arduino.cc/index.php?topic=288234.0   Simple example on Serial.read()
+ *  https://www.pololu.com/product/2824                 Data sheet for the motor
+ *  https://www.pololu.com/docs/0J55/3.c                Data sheet and connections for the motor and Arduino
+ *  http://www.pjrc.com/teensy/td_libs_Encoder.html     Link to download Encoder.h library, crucial for this program
+ */
+
+/* Encoder Library - Basic Example
+ * http://www.pjrc.com/teensy/td_libs_Encoder.html
+ * Download the library Encoder.h from here for this program to execute 
+ * This example code is in the public domain.
+ */
+
+
+#include <Encoder.h>
+
+// Change these two numbers to the pins connected to your encoder.
+//   Best Performance: both pins have interrupt capability
+//   Good Performance: only the first pin has interrupt capability
+//   Low Performance:  neither pin has interrupt capability
+Encoder myEnc(2, 5);
+//   avoid using pins with LEDs attached
+//   Digital I/O Pin 2 is one of the external interrupt pins available, D I/O pin 5 is one of the available pins
+//   not being used by the anything else
+
+#define enable 4            // This is the enable pin, turning both motors on/off
+#define M2_voltageSign 8    // this you can set this pin either HIGH (CW spin) or LOW (CCW spin) using a digitalWrite()
+#define M2_analogPin 10     // set the speed of rotation by setting the PWM value (0-255)
+
+const float pwm_per_volt = 35.4167;                 // ratio of pwm(255) to motor voltage(7.2)
+const long count_per_rev = 3200;                    // number of counts per revolution using Encoder.h file
+const float pi = 3.14159;                           // its the value of pi to 5 decimal places
+const float degree_per_count = 0.1125;              // ratio of 360 degrees per revolution to 3200 counts per revolution
+const int sample_rate = 50;                         // sampling time of the main program in milliseconds
+const float k_p = 0.071;                             // volts per degree of the motor
+const float k_i = 0.0001; //15;                    // units of volt per degree per second of the motor
+
+  
+  long theta_desired = 0;
+  long theta_actual = 0;
+  long newPosition = 0;
+  float radian_per_count = (float) (2.0 * pi) / count_per_rev;
+  char received_char;
+  boolean newChar = false;
+  float radian_per_sec = 0.0; 
+  int count = 0; 
+
+  float current_t = 0.0;
+
+  int pwmNum = 0;
+  int spin_direction;
+  float theta_error = 0.0;
+  
+  int theta_old;
+  float integral = 0.0;
+String inputString = "";
+double angle = 0;
+bool stringComplete;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(enable, OUTPUT);
+  // pinMode(7, OUTPUT);
+  pinMode(M2_voltageSign, OUTPUT);
+  // pinMode(9, OUTPUT);
+  pinMode(M2_analogPin, OUTPUT);
+  // pinMode(12, INPUT);
+
+  digitalWrite(enable, HIGH);
+  
+  theta_desired = -90;
+  theta_old = theta_desired;
+  integral = 0.0;
+
+}
+long oldPosition  = -999;                   // part of Encoder.h, leave this alone
+void loop() {
+ 
+  if (Serial.available() > 0) {
+    inputString = Serial.readStringUntil('\n');
+  //  Serial.println(inputString);
+  // if/else statements are checking whether 
+    if (inputString[0] == '1') {
+       theta_desired = 0;
+    }
+    else if (inputString[0] == '2') {
+      theta_desired = 90;
+    }
+    else if (inputString[0] == '3') {
+      theta_desired = 180;
+    }
+    else if (inputString[0] == '4') {
+      theta_desired = 270;
+    }
+    //  Serial.println(data);
+    
+    Serial.println(theta_actual);
+    
+    
+  }
+  long t_old = micros();
+  long delta_t = 0;
+  float us_to_ms = 0.0;
+
+  // This will reset the integration of the accumulated error everytime the desired position changes to avoid propagating the 
+  // error to position changes
+  if(theta_old != theta_desired) {
+    integral = 0;
+  }
+
+  // Calcualtion of the motor voltage and PWM value determined by theta_error, which is the difference between theta_desired and
+  // theta_actual
+  theta_old = theta_desired;
+  theta_error = theta_desired - theta_actual;
+  integral = integral + (theta_error * sample_rate / 1000);
+  float motor_volts = (float) theta_error * (k_p + (integral * k_i)); 
+
+  // determines the direction of the spin of the wheel, a positive value for the motor voltage will result in clockwise spin
+  // while a negative voltage will result in a CCW spin
+  if(motor_volts > 0.0){
+    spin_direction = HIGH;
+    } 
+    else {
+      spin_direction = LOW;
+   }
+
+   // Use this 'if' statement to act as a limiter to of the calculation of the motor voltage
+   // for the purpose of this assignment, the maximum voltage to the motor from the battery is 7.2 volts
+   // therefore, if the calculation of the motor voltage is greater than +7.2 volts or less than -7.2 volts,
+   // the voltage is limited to the maximum voltae available from the battery
+    if(motor_volts > 7.2){
+      motor_volts = 7.2;
+    } else if(motor_volts < -7.2){ //less than or greater
+      motor_volts = -7.2;
+    }
+
+    // The PWM value must be a positive integer from 0-255. So the calculation need the absolute value of the motor voltage
+    // multiplied by the unit conversion of PWM value per volt
+  pwmNum = abs(motor_volts) * pwm_per_volt;
+  
+  // 0 - 255, such that analogWrite(255) requests a 100% duty cycle (always on), 
+  //and analogWrite(127) is a 50% duty cycle (on half the time) for example.
+  digitalWrite(M2_voltageSign, spin_direction);
+  analogWrite(M2_analogPin, pwmNum); 
+  
+  newPosition = myEnc.read();
+
+  // **DEBUGGING**
+  /*float radian_pos = newPosition * radian_per_count;
+  if (newPosition != oldPosition) {
+    Serial.print("Count: ");
+    Serial.print(newPosition);
+    Serial.print("\t Radians: ");
+    Serial.println(radian_pos);
+    }*/
+    
+  //-----------------------------------------------------------------------------------------------------------
+  // This checks for any serial input to re-zero the encoder value 
+  if (Serial.available() > 0) {
+    received_char = Serial.read();
+    newChar = true;
+    myEnc.write(0);
+    count = 0;
+    integral = 0.0;
+    //theta_actual = 0;
+    //Serial.println();
+    } 
+  newChar = false;
+
+  // Calculation taking the position of the encoder in counts, and converts to a position in degrees
+  int delta_pos = newPosition - oldPosition;
+  oldPosition = newPosition; 
+  theta_actual = newPosition * degree_per_count;
+
+  // Calculation of angular velocity in the change in counts/sample time
+  float count_per_sample = (float) delta_pos / sample_rate;
+
+  // **DEBUGGING**
+  //Serial.print("delta counts: ");
+  //Serial.println(delta_pos);
+  //Serial.print("Counts per sample: ");
+  //Serial.println(count_per_sample, 4);
+
+  // Unit conversion of the counts/sample to counts/second
+  float count_per_sec = (float) count_per_sample * 1000.0;
+
+  // **DEBUGGING**
+  //Serial.print("\t Counts per second: ");
+  //Serial.println(count_per_sec, 4);
+
+  // Unit conversion of counts/second to radians/second
+  radian_per_sec = (float) count_per_sec * radian_per_count;
+  // **DEBUGGING**
+  //Serial.print("Radians per second: ");
+  //Serial.println(radian_per_sec, 3);
+
+  //Serial.print("Angular velocity: ");
+  //Serial.println(radian_per_micro);
+  
+
+  //DEBUGGING printing the timing ofthe main loop to make sure our sampling rate is 50 times per second, i.e. every 20 ms
+  /*Serial.print("Delta T: ");
+  Serial.print(us_to_ms);
+  Serial.println(" ms");*/
+
+  // Time taken at the end of the loop to determine the total time of the loop 
+  // Necessary for velocity calculations and to subtract from the total sampling interval time to maintain a consistent
+  // timed interval
+  long t_now = micros();
+  delta_t = t_now - t_old;
+  current_t = t_now / 1E6; 
+   
+  /*Serial.print(current_t);
+  Serial.print("\t");
+  Serial.print(pwmNum);
+  Serial.print("\t");
+  Serial.println(radian_per_sec, 3);*/
+
+  // **DEBUGGING**
+//  if(count < 25){
+ // Serial.print(theta_desired);
+ // Serial.print("\t");
+  //Serial.print(theta_actual);
+ // Serial.print("\t");
+  //Serial.print(theta_error);
+ // Serial.print("\t");
+ // Serial.print(newPosition);
+ // Serial.print("\t");
+ // Serial.print(motor_volts);
+ // Serial.print("\t");
+  //Serial.print(spin_direction);
+ // Serial.print("\t");
+ // Serial.print(pwmNum);
+ // Serial.print("\t");
+  //Serial.println(integral);
+ // }
+  //count++;
+
+  // **DEBUGGING**
+  // Serial.print("Delta_t in microseconds: ");
+  // Serial.println(delta_t);
+  
+ // us_to_ms = (float) delta_t / 1000.0; 
+  
+  // **DEBUGGING**
+  //Serial.print("Delta_t in milliseconds: ");
+  //Serial.println(us_to_ms, 4);
+
+  // There could be problems if the time through the loop is longer than the sampling rate. 
+  // If the time through the loop is longer than the sampling rate, prints out and error
+  // else delays for a time equal to the difference of the sampling rate and the time elapsed
+  if(us_to_ms > sample_rate) {
+    Serial.println("ERROR: Loop time longer than sampling rate.");
+  } else {
+      delay(sample_rate - us_to_ms);   //
+  }
+}
